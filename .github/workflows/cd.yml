@@ -71,21 +71,22 @@ jobs:
           "sha_short=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Connexion au registry
-        shell: powershell
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ghcr.io `
-            -u "${{ github.actor }}" `
-            --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sauvegarder l image precedente
         shell: powershell
         run: |
-          docker tag `
-            ghcr.io/${{ github.repository_owner }}/evaluation-devops:latest `
-            evaluation-devops:previous 2>$null
+          $ancienneImage = docker ps -a `
+            --filter "name=evaluation-devops-prod" `
+            --format "{{.Image}}"
 
-          exit 0
+          if ($ancienneImage) {
+            docker tag $ancienneImage evaluation-devops:previous
+          }
 
       - name: Recuperer la nouvelle image
         shell: powershell
@@ -129,11 +130,13 @@ jobs:
           if (-not $ok) {
             docker rm -f evaluation-devops-prod 2>$null
 
-            docker run -d `
-              --name evaluation-devops-prod `
-              -p 5001:5000 `
-              -e REDIS_HOST=host.docker.internal `
-              evaluation-devops:previous
+            if (docker images -q evaluation-devops:previous) {
+              docker run -d `
+                --name evaluation-devops-prod `
+                -p 5001:5000 `
+                -e REDIS_HOST=host.docker.internal `
+                evaluation-devops:previous
+            }
 
             exit 1
           }
