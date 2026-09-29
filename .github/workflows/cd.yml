@@ -1,0 +1,139 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environnement de deploiement
+        required: true
+        default: production
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Connexion au GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recuperer le SHA court
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Construire et pousser l image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:latest
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:${{ steps.vars.outputs.sha_short }}
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:v1.0.0
+
+  deploy:
+    needs: build-and-push
+    runs-on: self-hosted
+    timeout-minutes: 15
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Recuperer le SHA court
+        id: vars
+        shell: powershell
+        run: |
+          $sha = git rev-parse --short HEAD
+          "sha_short=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Connexion au registry
+        shell: powershell
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ghcr.io `
+            -u "${{ github.actor }}" `
+            --password-stdin
+
+      - name: Sauvegarder l image precedente
+        shell: powershell
+        run: |
+          docker tag `
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:latest `
+            evaluation-devops:previous 2>$null
+
+          exit 0
+
+      - name: Recuperer la nouvelle image
+        shell: powershell
+        run: |
+          docker pull `
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:${{ steps.vars.outputs.sha_short }}
+
+      - name: Deployer
+        shell: powershell
+        run: |
+          docker rm -f evaluation-devops-prod 2>$null
+
+          docker run -d `
+            --name evaluation-devops-prod `
+            -p 5001:5000 `
+            -e REDIS_HOST=host.docker.internal `
+            -e COMMIT_SHA=${{ steps.vars.outputs.sha_short }} `
+            ghcr.io/${{ github.repository_owner }}/evaluation-devops:${{ steps.vars.outputs.sha_short }}
+
+      - name: Verification du deploiement
+        shell: powershell
+        run: |
+          $ok = $false
+
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              $response = Invoke-WebRequest `
+                -Uri http://localhost:5001/health `
+                -UseBasicParsing
+
+              if ($response.StatusCode -eq 200) {
+                $ok = $true
+                break
+              }
+            }
+            catch {
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          if (-not $ok) {
+            docker rm -f evaluation-devops-prod 2>$null
+
+            docker run -d `
+              --name evaluation-devops-prod `
+              -p 5001:5000 `
+              -e REDIS_HOST=host.docker.internal `
+              evaluation-devops:previous
+
+            exit 1
+          }
