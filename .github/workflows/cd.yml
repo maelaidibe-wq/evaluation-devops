@@ -97,7 +97,13 @@ jobs:
       - name: Deployer
         shell: powershell
         run: |
-          docker rm -f evaluation-devops-prod 2>$null
+          $conteneur = docker ps -a `
+            --filter "name=evaluation-devops-prod" `
+            --format "{{.Names}}"
+
+          if ($conteneur) {
+            docker rm -f evaluation-devops-prod
+          }
 
           docker run -d `
             --name evaluation-devops-prod `
@@ -128,9 +134,17 @@ jobs:
           }
 
           if (-not $ok) {
-            docker rm -f evaluation-devops-prod 2>$null
+            $conteneur = docker ps -a `
+              --filter "name=evaluation-devops-prod" `
+              --format "{{.Names}}"
 
-            if (docker images -q evaluation-devops:previous) {
+            if ($conteneur) {
+              docker rm -f evaluation-devops-prod
+            }
+
+            $ancienneImage = docker images -q evaluation-devops:previous
+
+            if ($ancienneImage) {
               docker run -d `
                 --name evaluation-devops-prod `
                 -p 5001:5000 `
