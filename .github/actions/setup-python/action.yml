@@ -1,0 +1,20 @@
+name: Setup Python
+description: Installation de Python et des dependances
+
+inputs:
+  python-version:
+    description: Version de Python
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Installer Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+
+    - name: Installer les dependances
+      shell: bash
+      run: pip install -r requirements.txt

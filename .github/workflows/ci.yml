@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Preparer Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.12"
+
+      - name: Lint Python
+        run: flake8 app tests
+
+      - name: Lint YAML
+        run: yamllint .github docker-compose.yml prometheus.yml alert_rules.yml
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      REDIS_HOST: localhost
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Preparer Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Lancer les tests
+        run: |
+          python -m pytest --junitxml=report.xml --cov=app --cov-report=xml
+
+      - name: Publier les rapports
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapports-python-${{ matrix.python-version }}
+          path: |
+            report.xml
+            coverage.xml
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Construire l image Docker
+        run: docker build -t evaluation-devops:test .
+
+  ci-ok:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - lint
+      - test
+      - build
+
+    steps:
+      - name: Validation CI
+        run: echo "Tous les jobs de la CI sont valides"

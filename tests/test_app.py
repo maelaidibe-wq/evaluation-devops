@@ -2,7 +2,7 @@ import os
 
 os.environ["REDIS_HOST"] = "localhost"
 
-from app.app import app
+from app.app import app  # noqa: E402
 
 
 def test_home():
