@@ -1,3 +1,5 @@
+# Evaluation DevOps
+
 ## Prérequis
 
 Pour lancer le projet en local :
@@ -5,10 +7,6 @@ Pour lancer le projet en local :
 - Docker et Docker Compose
 - Python 3.11 ou 3.12
 - Git
-
-
-
-# Evaluation DevOps
 
 Projet réalisé dans le cadre de l'évaluation DevOps.
 
