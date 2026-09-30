@@ -1,11 +1,7 @@
 name: CD
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
+  push:
     branches:
       - main
 
@@ -21,19 +17,18 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+  ci:
+    uses: ./.github/workflows/ci.yml
 
+  build-and-push:
+    needs: ci
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Recuperer le depot
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Connexion au GitHub Container Registry
         uses: docker/login-action@v3
@@ -44,7 +39,7 @@ jobs:
 
       - name: Recuperer le SHA court
         id: vars
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        run: echo "sha_short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Construire et pousser l image
         uses: docker/build-push-action@v6
@@ -58,24 +53,27 @@ jobs:
 
   deploy:
     needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     timeout-minutes: 15
+    environment: ${{ inputs.environment || 'production' }}
 
     steps:
       - name: Recuperer le depot
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: Recuperer les SHA
+      - name: Recuperer les informations de deploiement
         id: vars
         shell: powershell
         run: |
-          $sha = git rev-parse --short HEAD
-          $previous = git rev-parse --short HEAD^
+          $sha = "${{ github.sha }}".Substring(0, 7)
+
+          $ancienneImage = docker inspect `
+            --format "{{.Config.Image}}" `
+            evaluation-devops-prod 2>$null
 
           "sha_short=$sha" >> $env:GITHUB_OUTPUT
-          "previous_sha=$previous" >> $env:GITHUB_OUTPUT
+          "previous_image=$ancienneImage" >> $env:GITHUB_OUTPUT
 
       - name: Connexion au registry
         uses: docker/login-action@v3
@@ -114,6 +112,8 @@ jobs:
           $ok = $false
 
           for ($i = 1; $i -le 3; $i++) {
+            Start-Sleep -Seconds 5
+
             try {
               $response = Invoke-WebRequest `
                 -Uri http://localhost:5001/health `
@@ -125,22 +125,49 @@ jobs:
               }
             }
             catch {
-              Start-Sleep -Seconds 5
             }
           }
 
           if (-not $ok) {
             docker rm -f evaluation-devops-prod
 
-            docker pull `
-              ghcr.io/${{ github.repository_owner }}/evaluation-devops:${{ steps.vars.outputs.previous_sha }}
+            $ancienneImage = "${{ steps.vars.outputs.previous_image }}"
 
-            docker run -d `
-              --name evaluation-devops-prod `
-              -p 5001:5000 `
-              -e REDIS_HOST=host.docker.internal `
-              -e COMMIT_SHA=${{ steps.vars.outputs.previous_sha }} `
-              ghcr.io/${{ github.repository_owner }}/evaluation-devops:${{ steps.vars.outputs.previous_sha }}
+            if ($ancienneImage) {
+              docker pull $ancienneImage
+
+              $ancienSha = $ancienneImage.Split(':')[-1]
+
+              docker run -d `
+                --name evaluation-devops-prod `
+                -p 5001:5000 `
+                -e REDIS_HOST=host.docker.internal `
+                -e COMMIT_SHA=$ancienSha `
+                $ancienneImage
+
+              $rollbackOk = $false
+
+              for ($i = 1; $i -le 3; $i++) {
+                Start-Sleep -Seconds 5
+
+                try {
+                  $response = Invoke-WebRequest `
+                    -Uri http://localhost:5001/health `
+                    -UseBasicParsing
+
+                  if ($response.StatusCode -eq 200) {
+                    $rollbackOk = $true
+                    break
+                  }
+                }
+                catch {
+                }
+              }
+
+              if (-not $rollbackOk) {
+                Write-Error "Le rollback a echoue"
+              }
+            }
 
             exit 1
           }

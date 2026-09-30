@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -86,13 +87,28 @@ jobs:
         run: docker build -t evaluation-devops:test .
 
   ci-ok:
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
     needs:
       - lint
       - test
       - build
 
+    env:
+      LINT_RESULT: ${{ needs.lint.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      BUILD_RESULT: ${{ needs.build.result }}
+
     steps:
-      - name: Validation CI
-        run: echo "Tous les jobs de la CI sont valides"
+      - name: Verifier le resultat des jobs
+        run: |
+          if [ "$LINT_RESULT" != "success" ] || \
+             [ "$TEST_RESULT" != "success" ] || \
+             [ "$BUILD_RESULT" != "success" ]; then
+            echo "Au moins un job de la CI a echoue"
+            exit 1
+          fi
+
+          echo "Tous les jobs de la CI sont valides"

@@ -46,13 +46,18 @@ def start_timer():
 def save_metrics(response):
     duration = time.time() - request.start_time
 
+    if request.url_rule:
+        endpoint = request.url_rule.rule
+    else:
+        endpoint = "unknown"
+
     request_count.labels(
-        endpoint=request.path,
+        endpoint=endpoint,
         code=response.status_code
     ).inc()
 
     request_duration.labels(
-        endpoint=request.path
+        endpoint=endpoint
     ).observe(duration)
 
     return response
