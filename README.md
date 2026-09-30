@@ -117,6 +117,7 @@ Le déploiement est effectué sur un runner GitHub self-hosted.
 
 Après le déploiement, l'endpoint `/health` est testé avec trois tentatives. En cas d'échec, un rollback vers l'image précédente est prévu.
 
+
 ## Métriques
 
 Prometheus récupère notamment :
@@ -129,3 +130,8 @@ Deux règles d'alerte sont configurées :
 
 - taux d'erreurs HTTP 5xx supérieur à 10 % pendant 1 minute
 - latence p95 supérieure à 500 ms pendant 2 minutes
+
+Le seuil de 10 % sur les erreurs 5xx permet de détecter un problème important sans déclencher une alerte sur une erreur isolée.
+
+Le seuil de 500 ms sur le p95 permet de détecter une dégradation des performances. La durée de 2 minutes évite de déclencher une alerte pour un ralentissement ponctuel.
+
